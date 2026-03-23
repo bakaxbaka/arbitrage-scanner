@@ -6,7 +6,20 @@ import { logger } from "./logger";
 import { exchangeFees } from "./cexIngestion";
 
 const MIN_SPREAD_PERCENT = 0.05;
+// Anything above this is almost certainly a ticker collision (same symbol, different token)
+// rather than real arbitrage. Real cross-exchange gaps rarely exceed 15%.
+const MAX_SPREAD_PERCENT = 20;
 const TRADE_AMOUNT_USD = 100;
+
+// Known ticker collisions: same symbol listed on multiple exchanges but different underlying
+// tokens. Pairs of (baseSymbol, venue1, venue2) where the comparison is invalid.
+// Format: "BASE:venue1:venue2" and "BASE:venue2:venue1" are both blocked.
+const TICKER_COLLISION_PAIRS = new Set<string>([
+  // ELON — Dogelon Mars vs other ELON-named tokens
+  "ELON:gate:mexc", "ELON:mexc:gate",
+  "ELON:gate:kucoin", "ELON:kucoin:gate",
+  "ELON:gate:okx", "ELON:okx:gate",
+]);
 
 const GAS_COSTS_USD: Record<string, number> = {
   ethereum: 20,
@@ -81,6 +94,14 @@ export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
 
         const spreadPercent = ((sellPrice - buyPrice) / buyPrice) * 100;
         if (spreadPercent < MIN_SPREAD_PERCENT) continue;
+
+        // Reject likely ticker collisions: same symbol = different tokens on each exchange
+        if (spreadPercent > MAX_SPREAD_PERCENT) continue;
+
+        // Reject explicitly flagged known ticker collisions (e.g. ELON on Gate vs MEXC)
+        const baseSymbol = pair.split("/")[0];
+        const collisionKey = `${baseSymbol}:${buyAt.venue}:${sellAt.venue}`;
+        if (TICKER_COLLISION_PAIRS.has(collisionKey)) continue;
 
         const buyFeeRate = getTradingFee(buyAt.venue, buyAt.source);
         const sellFeeRate = getTradingFee(sellAt.venue, sellAt.source);
