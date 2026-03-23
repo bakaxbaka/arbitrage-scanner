@@ -1,21 +1,28 @@
+import React from "react";
 import { useGetStats } from "@workspace/api-client-react";
-import { Activity, TrendingUp, AlertTriangle, Globe, Layers, DollarSign } from "lucide-react";
+import { Activity, TrendingUp, AlertTriangle, Globe, Layers, DollarSign, Cpu, Link } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function StatsHeader() {
-  const { data: stats, isLoading, isError } = useGetStats({
-    query: { refetchInterval: 2000 }
+  const { data: rawStats, isLoading, isError } = useGetStats({
+    query: { refetchInterval: 3000 }
   });
+
+  const stats = rawStats as (typeof rawStats & {
+    scannedTokens?: number;
+    scannedChains?: number;
+    chainsActive?: string[];
+  }) | undefined;
 
   if (isLoading || isError || !stats) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        {Array.from({ length: 8 }).map((_, i) => (
           <Card key={i} className="bg-card/50 border-border/50">
             <CardContent className="p-4">
-              <Skeleton className="h-4 w-20 mb-2 bg-muted" />
-              <Skeleton className="h-8 w-16 bg-muted" />
+              <Skeleton className="h-3 w-16 mb-2 bg-muted" />
+              <Skeleton className="h-7 w-14 bg-muted" />
             </CardContent>
           </Card>
         ))}
@@ -53,7 +60,7 @@ export function StatsHeader() {
       bg: "bg-blue-400/10"
     },
     {
-      title: "Venues Monitored",
+      title: "Venues",
       value: stats.venuesMonitored,
       icon: Globe,
       color: "text-purple-400",
@@ -65,23 +72,37 @@ export function StatsHeader() {
       icon: Layers,
       color: "text-pink-400",
       bg: "bg-pink-400/10"
+    },
+    {
+      title: "Tokens Scanned",
+      value: stats.scannedTokens ?? "…",
+      icon: Cpu,
+      color: "text-cyan-400",
+      bg: "bg-cyan-400/10"
+    },
+    {
+      title: "Chains Active",
+      value: stats.scannedChains ?? 7,
+      icon: Link,
+      color: "text-orange-400",
+      bg: "bg-orange-400/10"
     }
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
       {items.map((item, i) => (
         <Card key={i} className="bg-card border-border/50 shadow-sm hover:bg-card/80 transition-colors">
           <CardContent className="p-4 flex flex-col justify-between h-full">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider leading-tight">
                 {item.title}
               </span>
-              <div className={`p-1.5 rounded-md ${item.bg}`}>
-                <item.icon className={`h-4 w-4 ${item.color}`} />
+              <div className={`p-1 rounded-md ${item.bg}`}>
+                <item.icon className={`h-3 w-3 ${item.color}`} />
               </div>
             </div>
-            <div className={`text-2xl font-mono font-bold ${item.color}`}>
+            <div className={`text-xl font-mono font-bold ${item.color}`}>
               {item.value}
             </div>
           </CardContent>

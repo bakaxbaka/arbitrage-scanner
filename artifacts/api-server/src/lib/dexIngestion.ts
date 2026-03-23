@@ -158,5 +158,5 @@ export function startDexIngestion() {
   pollDexPrices().catch((err) => logger.error({ err }, "Initial DEX poll failed"));
   setInterval(() => {
     pollDexPrices().catch((err) => logger.error({ err }, "DEX poll failed"));
-  }, 30000);
+  }, 120_000);
 }

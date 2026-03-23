@@ -5,6 +5,7 @@ import { initWebSocketServer } from "./lib/wsServer";
 import { startCexIngestion } from "./lib/cexIngestion";
 import { startDexIngestion } from "./lib/dexIngestion";
 import { startArbitrageDetection } from "./lib/arbitrageDetection";
+import { startChainScanner } from "./lib/chainScanner";
 
 const rawPort = process.env["PORT"];
 
@@ -38,4 +39,8 @@ server.listen(port, (err?: Error) => {
   setTimeout(() => {
     startArbitrageDetection();
   }, 5000);
+
+  setTimeout(() => {
+    startChainScanner();
+  }, 60_000);
 });

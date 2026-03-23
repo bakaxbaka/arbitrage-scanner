@@ -4,6 +4,7 @@ import { opportunitiesTable } from "@workspace/db/schema";
 import { desc, gte, and, eq, avg, max, count, sum } from "drizzle-orm";
 import { priceStore } from "../lib/priceStore";
 import { detectArbitrageOpportunities } from "../lib/arbitrageDetection";
+import { getScannedTokenCount, getScannedChains } from "../lib/chainScanner";
 
 const router: IRouter = Router();
 
@@ -120,14 +121,20 @@ router.get("/v1/stats", async (req, res) => {
     const maxSpread = Math.max(liveMax, dbMax);
     const totalProfit = parseFloat(spreadStats?.totalProfit ?? "0") || 0;
 
+    const scannedTokens = getScannedTokenCount();
+    const scannedChains = getScannedChains();
+
     res.json({
       totalOpportunities: (totalCount?.count ?? 0) + activeCount,
       activeOpportunities: activeCount,
       avgSpreadPercent: isFinite(avgSpread) ? parseFloat(avgSpread.toFixed(4)) : 0,
       maxSpreadPercent: isFinite(maxSpread) ? parseFloat(maxSpread.toFixed(4)) : 0,
       totalProfitUsd: isFinite(totalProfit) ? parseFloat(totalProfit.toFixed(2)) : 0,
-      venuesMonitored: Math.max(venues.length, 8),
-      pairsMonitored: Math.max(pairs.length, 10),
+      venuesMonitored: venues.length,
+      pairsMonitored: pairs.length,
+      scannedTokens,
+      scannedChains: scannedChains.length,
+      chainsActive: scannedChains,
       lastUpdated: new Date().toISOString(),
     });
   } catch (err) {
