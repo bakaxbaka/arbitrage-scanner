@@ -22,6 +22,14 @@ const CHAIN_COLORS: Record<string, string> = {
   zksync: "border-violet-500/50 text-violet-400",
   linea: "border-indigo-500/50 text-indigo-400",
   scroll: "border-amber-500/50 text-amber-400",
+  gate: "border-teal-500/50 text-teal-400",
+  binance: "border-yellow-400/50 text-yellow-400",
+  bybit: "border-orange-400/50 text-orange-400",
+  okx: "border-slate-400/50 text-slate-300",
+  kucoin: "border-green-500/50 text-green-400",
+  mexc: "border-fuchsia-500/50 text-fuchsia-400",
+  kraken: "border-violet-400/50 text-violet-400",
+  coinbase: "border-blue-600/50 text-blue-500",
 };
 
 const CONTRACT_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -379,15 +387,14 @@ export function PriceTable() {
                     <TableRow key={price.id} className="border-border/20 hover:bg-muted/30 transition-colors">
                       <TableCell className="py-2">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-medium text-xs truncate max-w-[120px]">{price.venue}</span>
                           <Badge
                             variant="outline"
                             className={cn(
-                              "text-[9px] uppercase px-1 py-0 h-3.5 hidden sm:inline-flex shrink-0",
-                              price.source === "dex" ? "border-emerald-500/40 text-emerald-500" : "border-blue-500/40 text-blue-400"
+                              "text-[9px] uppercase px-1.5 py-0 h-4 shrink-0 font-mono",
+                              CHAIN_COLORS[price.venue] ?? (price.source === "dex" ? "border-emerald-500/40 text-emerald-500" : "border-blue-500/40 text-blue-400")
                             )}
                           >
-                            {price.source}
+                            {price.venue}
                           </Badge>
                         </div>
                       </TableCell>

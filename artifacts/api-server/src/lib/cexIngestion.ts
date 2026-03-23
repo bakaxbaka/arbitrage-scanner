@@ -23,6 +23,8 @@ export const exchangeFees: Record<string, number> = {
   okx: 0.001,
   kraken: 0.0026,
   kucoin: 0.001,
+  gate: 0.002,
+  mexc: 0.001,
 };
 
 async function loadExchangeFees() {

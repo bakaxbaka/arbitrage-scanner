@@ -1,6 +1,6 @@
 import React from "react";
 import { useGetStats } from "@workspace/api-client-react";
-import { Activity, TrendingUp, AlertTriangle, Globe, Layers, DollarSign, Cpu, Link } from "lucide-react";
+import { Activity, TrendingUp, AlertTriangle, Globe, Layers, DollarSign, BarChart2, Link } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -13,6 +13,7 @@ export function StatsHeader() {
     scannedTokens?: number;
     scannedChains?: number;
     chainsActive?: string[];
+    gatePairCount?: number;
   }) | undefined;
 
   if (isLoading || isError || !stats) {
@@ -74,9 +75,9 @@ export function StatsHeader() {
       bg: "bg-pink-400/10"
     },
     {
-      title: "Tokens Scanned",
-      value: stats.scannedTokens ?? "…",
-      icon: Cpu,
+      title: "Gate.io Listed",
+      value: stats.gatePairCount ?? "…",
+      icon: BarChart2,
       color: "text-cyan-400",
       bg: "bg-cyan-400/10"
     },

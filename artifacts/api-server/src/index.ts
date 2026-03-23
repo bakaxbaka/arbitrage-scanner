@@ -6,6 +6,7 @@ import { startCexIngestion } from "./lib/cexIngestion";
 import { startDexIngestion } from "./lib/dexIngestion";
 import { startArbitrageDetection } from "./lib/arbitrageDetection";
 import { startChainScanner } from "./lib/chainScanner";
+import { startGateScanner } from "./lib/gateScanner";
 
 const rawPort = process.env["PORT"];
 
@@ -35,6 +36,7 @@ server.listen(port, (err?: Error) => {
 
   startDexIngestion();
   startCexIngestion();
+  startGateScanner();
 
   setTimeout(() => {
     startArbitrageDetection();

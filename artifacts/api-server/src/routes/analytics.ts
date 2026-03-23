@@ -5,6 +5,7 @@ import { desc, gte, and, eq, avg, max, count, sum } from "drizzle-orm";
 import { priceStore } from "../lib/priceStore";
 import { detectArbitrageOpportunities } from "../lib/arbitrageDetection";
 import { getScannedTokenCount, getScannedChains } from "../lib/chainScanner";
+import { getGatePairCount } from "../lib/gateScanner";
 
 const router: IRouter = Router();
 
@@ -123,6 +124,7 @@ router.get("/v1/stats", async (req, res) => {
 
     const scannedTokens = getScannedTokenCount();
     const scannedChains = getScannedChains();
+    const gatePairCount = getGatePairCount();
 
     res.json({
       totalOpportunities: (totalCount?.count ?? 0) + activeCount,
@@ -135,6 +137,7 @@ router.get("/v1/stats", async (req, res) => {
       scannedTokens,
       scannedChains: scannedChains.length,
       chainsActive: scannedChains,
+      gatePairCount,
       lastUpdated: new Date().toISOString(),
     });
   } catch (err) {
