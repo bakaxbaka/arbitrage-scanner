@@ -1,15 +1,20 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Arbitrage Scanner API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: prices
+    description: Price data
+  - name: opportunities
+    description: Arbitrage opportunities
+  - name: analytics
+    description: Analytics and spread history
 paths:
   /healthz:
     get:
@@ -24,6 +29,113 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /v1/prices:
+    get:
+      operationId: getPrices
+      tags: [prices]
+      summary: Get latest prices
+      description: Get latest prices across all venues
+      parameters:
+        - name: pair
+          in: query
+          schema:
+            type: string
+          description: Filter by trading pair (e.g. BTC/USDT)
+        - name: source
+          in: query
+          schema:
+            type: string
+          description: Filter by source (cex, dex, all)
+        - name: chain
+          in: query
+          schema:
+            type: string
+          description: Filter by chain (ethereum, arbitrum, etc.)
+      responses:
+        "200":
+          description: List of latest prices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceEntry"
+
+  /v1/opportunities:
+    get:
+      operationId: getOpportunities
+      tags: [opportunities]
+      summary: Get arbitrage opportunities
+      description: Get current arbitrage opportunities
+      parameters:
+        - name: minSpread
+          in: query
+          schema:
+            type: number
+          description: Minimum spread percentage
+        - name: activeOnly
+          in: query
+          schema:
+            type: boolean
+          description: Only return active opportunities
+        - name: limit
+          in: query
+          schema:
+            type: integer
+          description: Max number of results
+      responses:
+        "200":
+          description: List of arbitrage opportunities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Opportunity"
+
+  /v1/analytics/spread-history:
+    get:
+      operationId: getSpreadHistory
+      tags: [analytics]
+      summary: Get spread history
+      description: Historical spread analysis between venues
+      parameters:
+        - name: pair
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Trading pair
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+          description: Timeframe (1m, 5m, 1h, 1d)
+      responses:
+        "200":
+          description: Spread history data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpreadPoint"
+
+  /v1/stats:
+    get:
+      operationId: getStats
+      tags: [analytics]
+      summary: Get dashboard stats
+      description: Aggregated statistics for dashboard header
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +146,152 @@ components:
       required:
         - status
 
+    PriceEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        time:
+          type: string
+          format: date-time
+        source:
+          type: string
+        venue:
+          type: string
+        chain:
+          type: string
+          nullable: true
+        pair:
+          type: string
+        baseToken:
+          type: string
+        quoteToken:
+          type: string
+        price:
+          type: number
+        volume24h:
+          type: number
+          nullable: true
+        liquidityUsd:
+          type: number
+          nullable: true
+        bid:
+          type: number
+          nullable: true
+        ask:
+          type: number
+          nullable: true
+      required:
+        - id
+        - time
+        - source
+        - venue
+        - pair
+        - baseToken
+        - quoteToken
+        - price
+
+    Opportunity:
+      type: object
+      properties:
+        id:
+          type: string
+        detectedAt:
+          type: string
+          format: date-time
+        buyVenue:
+          type: string
+        sellVenue:
+          type: string
+        buySource:
+          type: string
+        sellSource:
+          type: string
+        pair:
+          type: string
+        buyPrice:
+          type: number
+        sellPrice:
+          type: number
+        spreadPercent:
+          type: number
+        profitUsd:
+          type: number
+        gasCostEth:
+          type: number
+          nullable: true
+        netProfitUsd:
+          type: number
+          nullable: true
+        buyLiquidity:
+          type: number
+          nullable: true
+        sellLiquidity:
+          type: number
+          nullable: true
+        status:
+          type: string
+        durationMs:
+          type: integer
+          nullable: true
+      required:
+        - id
+        - detectedAt
+        - buyVenue
+        - sellVenue
+        - buySource
+        - sellSource
+        - pair
+        - buyPrice
+        - sellPrice
+        - spreadPercent
+        - profitUsd
+        - status
+
+    SpreadPoint:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+        spread:
+          type: number
+        buyVenue:
+          type: string
+        sellVenue:
+          type: string
+      required:
+        - time
+        - spread
+        - buyVenue
+        - sellVenue
+
+    DashboardStats:
+      type: object
+      properties:
+        totalOpportunities:
+          type: integer
+        activeOpportunities:
+          type: integer
+        avgSpreadPercent:
+          type: number
+        maxSpreadPercent:
+          type: number
+        totalProfitUsd:
+          type: number
+        venuesMonitored:
+          type: integer
+        pairsMonitored:
+          type: integer
+        lastUpdated:
+          type: string
+          format: date-time
+      required:
+        - totalOpportunities
+        - activeOpportunities
+        - avgSpreadPercent
+        - maxSpreadPercent
+        - totalProfitUsd
+        - venuesMonitored
+        - pairsMonitored
+        - lastUpdated

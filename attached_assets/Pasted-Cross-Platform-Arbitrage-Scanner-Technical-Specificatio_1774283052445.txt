@@ -1,0 +1,332 @@
+Cross-Platform Arbitrage Scanner - Technical Specification
+Objective
+Build a high-frequency arbitrage detection system that monitors price discrepancies between CEXs (Binance, Coinbase, Bybit, OKX), DEXs (Uniswap V3, Curve, PancakeSwap), and direct liquidity pools across crypto-to-crypto pairs (ETH/BTC, ETH/USDC, etc.) and cross-chain opportunities.
+Core Architecture
+plain
+Copy
+┌─────────────────────────────────────────────────────────────────┐
+│                    DATA INGESTION LAYER                          │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ │
+│  │ CEX WebSocket│ │ DEX Subgraphs│ │ Pool Direct RPC Calls    │ │
+│  │ (Binance,    │ │ (TheGraph,   │ │ ( reserves, slot0)       │ │
+│  │  Coinbase)   │ │  Goldsky)    │ │                          │ │
+│  └──────────────┘ └──────────────┘ └──────────────────────────┘ │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│                   PRICE AGGREGATION ENGINE                       │
+│  • Normalize all prices to USD base                              │
+│  • Handle decimals (18, 6, 8, 9)                                 │
+│  • Calculate implied rates (e.g., BTC/ETH via BTC/USDT ÷ ETH/USDT│
+│  • VWAP (Volume Weighted Average Price) calculation              │
+│  • Liquidity depth scoring                                       │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│              ARBITRAGE DETECTION ENGINE                          │
+│  ┌──────────────────┐ ┌──────────────────┐ ┌─────────────────┐ │
+│  │ CEX ↔ DEX        │ │ DEX ↔ DEX        │ │ Cross-Chain     │ │
+│  │ Same-Chain       │ │ Same-Chain       │ │ CEX Bridge      │ │
+│  └──────────────────┘ └──────────────────┘ └─────────────────┘ │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────────┐
+│                    EXECUTION & ALERTS                            │
+│  REST API + WebSocket + Telegram/Discord Webhooks                │
+└─────────────────────────────────────────────────────────────────┘
+1. DATA SOURCES TO IMPLEMENT
+A. CEX Integration (WebSocket Priority)
+Binance: wss://stream.binance.com:9443/ws/!ticker@arr (all tickers) or individual ticker streams
+Coinbase: wss://ws-feed.exchange.coinbase.com (Level2 orderbook)
+Bybit: wss://stream.bybit.com/v5/public/spot (tickers)
+OKX: wss://ws.okx.com:8443/ws/v5/public (tickers)
+Kraken: wss://ws.kraken.com (OHLC + spread)
+Required Pairs:
+Major: BTC/USDT, ETH/USDT, BTC/ETH, SOL/USDT, ARB/USDT
+Altcoins: LINK/USDT, UNI/USDT, AAVE/USDT, SNX/USDT
+Stables: USDC/USDT, DAI/USDT
+B. DEX Integration (On-Chain + Subgraphs)
+Uniswap V3 (Ethereum, Arbitrum, Base, Polygon):
+JavaScript
+Copy
+// Query slot0 for current sqrtPriceX96
+function getUniswapV3Price(poolAddress) {
+  // slot0 returns (sqrtPriceX96, tick, observationIndex, ...)
+  // price = (sqrtPriceX96 / 2^96) ^ 2
+  // Adjust for token decimals: price * (10^token0_decimals) / (10^token1_decimals)
+}
+Uniswap V2 (BSC, Ethereum):
+JavaScript
+Copy
+// getReserves() -> reserve0, reserve1, blockTimestampLast
+// price = reserve1 / reserve0 (adjusted for decimals)
+Curve (Stableswaps):
+Use get_dy() function to simulate trades
+Handle different A parameters and fees
+Balancer (Weighted pools):
+Use getPoolTokens() and weights
+C. Direct Pool Monitoring
+Monitor these specific high-volume pools:
+Uniswap V3 ETH/USDC 0.05% (0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8)
+Curve 3pool (DAI/USDC/USDT)
+PancakeSwap V3 BSC pools
+Aerodrome (Base) pools
+2. PRICE NORMALIZATION LOGIC
+Create a PriceNormalizer class:
+Python
+Copy
+class PriceNormalizer:
+    def __init__(self):
+        self.usd_feeds = {
+            'USDT': 1.0,
+            'USDC': 1.0,
+            'DAI': 1.0,
+            'USDCE': 1.0  # Bridged USDC
+        }
+    
+    def normalize_to_usd(self, pair_price: Decimal, base_token: str, quote_token: str) -> Decimal:
+        """
+        Convert any pair price to USD equivalent
+        Example: BTC/ETH price → USD via ETH/USDT price feed
+        """
+        pass
+    
+    def calculate_cross_rate(self, pair_a: str, pair_b: str) -> Decimal:
+        """
+        Calculate implied rate between two assets via USD
+        BTC/ETH = (BTC/USDT) / (ETH/USDT)
+        """
+        pass
+3. DATABASE SCHEMA (PostgreSQL/TimescaleDB)
+sql
+Copy
+-- Time-series hypertable for prices
+CREATE TABLE prices (
+    time TIMESTAMPTZ NOT NULL,
+    source VARCHAR(50),          -- 'binance', 'uniswap_v3', 'curve'
+    venue VARCHAR(100),          -- 'binance_spot', 'eth_usdc_0.05%', '3pool'
+    chain VARCHAR(50),           -- 'ethereum', 'arbitrum', 'bsc', NULL for CEX
+    pair VARCHAR(50),            -- 'BTC/USDT', 'ETH/USDC'
+    base_token VARCHAR(50),
+    quote_token VARCHAR(50),
+    price DECIMAL(36, 18),
+    volume_24h DECIMAL(36, 18),
+    liquidity_usd DECIMAL(36, 2),
+    bid DECIMAL(36, 18),         -- For CEX orderbook
+    ask DECIMAL(36, 18),
+    block_number BIGINT,         -- For on-chain data
+    tx_hash VARCHAR(66),         -- Last update tx
+    PRIMARY KEY (time, source, venue, pair)
+);
+
+-- Convert to hypertable
+SELECT create_hypertable('prices', 'time', chunk_time_interval => INTERVAL '1 hour');
+
+-- Arbitrage opportunities table
+CREATE TABLE opportunities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    detected_at TIMESTAMPTZ DEFAULT NOW(),
+    buy_venue VARCHAR(100),
+    sell_venue VARCHAR(100),
+    buy_source VARCHAR(50),      -- 'cex' or 'dex'
+    sell_source VARCHAR(50),
+    pair VARCHAR(50),
+    buy_price DECIMAL(36, 18),
+    sell_price DECIMAL(36, 18),
+    spread_percent DECIMAL(10, 4),
+    profit_usd DECIMAL(36, 2),
+    gas_cost_eth DECIMAL(36, 18),-- Estimated gas
+    net_profit_usd DECIMAL(36, 2),
+    buy_liquidity DECIMAL(36, 2),
+    sell_liquidity DECIMAL(36, 2),
+    status VARCHAR(20),          -- 'active', 'expired', 'executed'
+    duration_ms INTEGER          -- How long opportunity lasted
+);
+
+-- Indexes for fast queries
+CREATE INDEX idx_prices_latest ON prices (source, venue, pair, time DESC);
+CREATE INDEX idx_opportunities_time ON opportunities (detected_at DESC);
+4. ARBITRAGE DETECTION ALGORITHMS
+Implement three detection modes:
+A. CEX ↔ DEX Arbitrage (Same Chain)
+Python
+Copy
+def detect_cex_dex_arbitrage(self, cex_prices: Dict, dex_prices: Dict):
+    """
+    Compare Binance/Coinbase spot prices vs DEX AMM prices
+    Account for: Gas fees, DEX fees (0.05%, 0.3%), Slippage
+    """
+    for pair in monitored_pairs:
+        cex_bid = cex_prices[pair]['bid']  # Buy on DEX, Sell on CEX
+        cex_ask = cex_prices[pair]['ask']  # Buy on CEX, Sell on DEX
+        
+        dex_price = dex_prices[pair]['price']
+        dex_liquidity = dex_prices[pair]['liquidity']
+        
+        # Opportunity 1: Buy DEX, Sell CEX
+        if dex_price < cex_bid:
+            gross_profit = cex_bid - dex_price
+            gas_cost = estimate_gas('swap', chain)
+            net_profit = gross_profit - gas_cost
+            
+            if net_profit > min_profit_threshold:
+                log_opportunity(direction='dex_to_cex')
+        
+        # Opportunity 2: Buy CEX, Sell DEX
+        if cex_ask < dex_price:
+            # Check if CEX withdrawal to chain is fast/cheap enough
+            pass
+B. DEX ↔ DEX Arbitrage (Cross-DEX, Same Chain)
+Uniswap V3 vs SushiSwap vs Curve vs Balancer
+Flash loan opportunities (check if profitable with Aave/dYdX flash loans)
+C. Cross-Chain Arbitrage
+Python
+Copy
+def detect_cross_chain_arbitrage(self):
+    """
+    Compare ETH price on Ethereum vs Arbitrum vs Base vs BSC
+    Account for: Bridge fees, Bridge time, Reorg risk
+    """
+    chains = ['ethereum', 'arbitrum', 'base', 'bsc', 'optimism']
+    
+    for token in ['ETH', 'USDC', 'WBTC']:
+        prices = {}
+        for chain in chains:
+            prices[chain] = get_dex_price(token, chain)
+        
+        # Find max spread between chains
+        for buy_chain in chains:
+            for sell_chain in chains:
+                if buy_chain == sell_chain: continue
+                
+                spread = prices[sell_chain] - prices[buy_chain]
+                bridge_cost = get_bridge_cost(buy_chain, sell_chain, token)
+                
+                if spread > bridge_cost * 1.5:  # 50% buffer
+                    alert_cross_chain_opp(buy_chain, sell_chain, token)
+5. API ENDPOINTS (FastAPI)
+Python
+Copy
+from fastapi import FastAPI, WebSocket
+from typing import List, Optional
+
+app = FastAPI()
+
+@app.get("/api/v1/prices")
+async def get_prices(
+    pair: Optional[str] = None,
+    source: Optional[str] = None,  # 'cex', 'dex', 'all'
+    chain: Optional[str] = None
+):
+    """Get latest prices across all venues"""
+    pass
+
+@app.get("/api/v1/opportunities")
+async def get_opportunities(
+    min_spread: float = 0.1,
+    active_only: bool = True,
+    limit: int = 50
+):
+    """Get current arbitrage opportunities"""
+    pass
+
+@app.websocket("/ws/prices")
+async def price_stream(websocket: WebSocket):
+    """Real-time price updates via WebSocket"""
+    await websocket.accept()
+    while True:
+        data = await get_latest_prices()
+        await websocket.send_json(data)
+        await asyncio.sleep(1)
+
+@app.get("/api/v1/analytics/spread-history")
+async def get_spread_history(
+    pair: str,
+    timeframe: str = "1h"  # 1m, 5m, 1h, 1d
+):
+    """Historical spread analysis between venues"""
+    pass
+6. FRONTEND DASHBOARD (React/Next.js)
+Create a real-time dashboard with:
+Spread Matrix: Grid showing spreads between all venue combinations
+plain
+Copy
+      Binance  Coinbase  UniV3  Curve
+BTC   0.00%    +0.12%   -0.05%  +0.08%
+ETH   -0.03%   0.00%    +0.15%  -0.02%
+Opportunity Feed: Live list with:
+Flashing green when >1% profit
+Auto-refresh every 2 seconds
+One-click "Copy Trade Data" button
+Charts:
+Price divergence over time (TradingView lightweight charts)
+Liquidity depth comparison
+Gas cost vs profit correlation
+Alert Configuration:
+Minimum spread threshold slider (0.1% - 5%)
+Minimum liquidity filter ($10k - $10M)
+Telegram bot integration settings
+7. ENVIRONMENT VARIABLES
+Create .env template:
+bash
+Copy
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/arbitrage
+
+# RPC Nodes (Use QuickNode/Alchemy/Infura)
+ETH_RPC=https://eth-mainnet.g.alchemy.com/v2/KEY
+ARB_RPC=https://arb-mainnet.g.alchemy.com/v2/KEY
+BASE_RPC=https://base-mainnet.g.alchemy.com/v2/KEY
+BSC_RPC=https://bsc-dataseed.binance.org
+POLYGON_RPC=https://polygon-mainnet.g.alchemy.com/v2/KEY
+
+# CEX API Keys (read-only)
+BINANCE_API_KEY=xxx
+BINANCE_SECRET=xxx
+COINBASE_API_KEY=xxx
+COINBASE_SECRET=xxx
+
+# Alerting
+TELEGRAM_BOT_TOKEN=xxx
+TELEGRAM_CHAT_ID=xxx
+DISCORD_WEBHOOK_URL=xxx
+
+# Strategy Config
+MIN_SPREAD_PERCENT=0.2
+MIN_LIQUIDITY_USD=50000
+SCAN_INTERVAL_MS=2000
+MAX_SLIPPAGE_PERCENT=0.5
+8. DEPENDENCIES
+txt
+Copy
+# requirements.txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+aiohttp==3.9.1
+web3==6.11.3
+psycopg2-binary==2.9.9
+timescale-python==0.0.8
+python-telegram-bot==20.6
+ccxt==4.1.72  # For CEX normalization
+pydantic==2.5.0
+redis==5.0.1
+python-dotenv==1.0.0
+pytest==7.4.3
+9. IMPLEMENTATION CHECKLIST
+Phase 1: Data Ingestion
+[ ] Connect to Binance WebSocket (ticker stream)
+[ ] Connect to Coinbase WebSocket
+[ ] Query Uniswap V3 subgraph (TheGraph)
+[ ] Query Curve pools via RPC
+[ ] Store in TimescaleDB with proper indexing
+Phase 2: Normalization
+[ ] Normalize all prices to USD base
+[ ] Calculate implied cross-rates (BTC/ETH from BTC/USDT ÷ ETH/USDT)
+[ ] Handle different decimal places (BTC=8, ETH=18, USDC=6)
+[ ] VWAP calculation for depth
+Phase 3: Detection
+[ ] CEX-DEX spread calculator with gas estimation
+[ ] DEX-DEX same-chain comparison
+[ ] Cross-chain bridge cost estimation
+[ ] Flash loan profitability check

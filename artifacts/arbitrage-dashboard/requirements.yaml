@@ -1,0 +1,11 @@
+packages:
+  "recharts": "Required for the spread history line chart visualization"
+  "framer-motion": "For polished layout animations and flashing rows"
+  "date-fns": "For formatting timestamps in the dashboard and charts"
+  "clsx": "Utility for conditionally joining class names"
+  "tailwind-merge": "Utility for merging tailwind classes without style conflicts"
+
+notes:
+  - The Orval generated hooks from @workspace/api-client-react will be used for all data fetching.
+  - Using refetchInterval: 2000 on REST queries to satisfy the auto-refresh requirement.
+  - WebSocket connects to the current host's /ws path for real-time price updates.
