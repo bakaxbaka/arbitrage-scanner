@@ -10,6 +10,7 @@
 import { priceStore } from "./priceStore";
 import { broadcast } from "./wsServer";
 import { logger } from "./logger";
+import { WATCHLIST_SYMBOLS } from "./watchlist";
 
 const POLL_INTERVAL_MS = 30_000;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -293,10 +294,57 @@ async function runScan() {
     }
   }
 
+  // Second pass: store prices for watchlist symbols not found on Gate.io
+  // but available on KuCoin, MEXC, or OKX
+  let watchlistExtra = 0;
+  for (const base of WATCHLIST_SYMBOLS) {
+    if (gateTickers.has(base)) continue; // already handled above
+
+    let found = false;
+
+    const kc = kucoinTickers.get(base);
+    if (kc) {
+      const p = parseFloat(kc.last);
+      storePrice("kucoin", base, p, parseFloat(kc.buy) || undefined, parseFloat(kc.sell) || undefined, parseFloat(kc.volValue) || undefined);
+      found = true;
+    }
+
+    const mx = mexcTickers.get(base);
+    if (mx) {
+      const p = parseFloat(mx.lastPrice);
+      storePrice("mexc", base, p, parseFloat(mx.bidPrice) || undefined, parseFloat(mx.askPrice) || undefined, undefined);
+      found = true;
+    }
+
+    const ok = okxTickers.get(base);
+    if (ok) {
+      const p = parseFloat(ok.last);
+      storePrice("okx", base, p, parseFloat(ok.bidPx) || undefined, parseFloat(ok.askPx) || undefined, parseFloat(ok.volCcy24h) || undefined);
+      found = true;
+    }
+
+    const bn = binanceTickers.get(base);
+    if (bn) {
+      const p = parseFloat(bn.lastPrice);
+      storePrice("binance", base, p, parseFloat(bn.bidPrice) || undefined, parseFloat(bn.askPrice) || undefined, undefined);
+      found = true;
+    }
+
+    const bb = bybitTickers.get(base);
+    if (bb) {
+      const p = parseFloat(bb.lastPrice);
+      storePrice("bybit", base, p, parseFloat(bb.bid1Price) || undefined, parseFloat(bb.ask1Price) || undefined, parseFloat(bb.turnover24h) || undefined);
+      found = true;
+    }
+
+    if (found) watchlistExtra++;
+  }
+
   logger.info(
     {
       gateListings: gateTickers.size,
       stored: storedCount,
+      watchlistExtra,
       binanceOverlap: [...gateTickers.keys()].filter((b) => binanceTickers.has(b)).length,
       bybitOverlap: [...gateTickers.keys()].filter((b) => bybitTickers.has(b)).length,
       okxOverlap: [...gateTickers.keys()].filter((b) => okxTickers.has(b)).length,
