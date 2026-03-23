@@ -6,7 +6,7 @@ import { logger } from "./logger";
 import { exchangeFees } from "./cexIngestion";
 
 const MIN_SPREAD_PERCENT = 0.05;
-const TRADE_AMOUNT_USD = 10_000;
+const TRADE_AMOUNT_USD = 100;
 
 const GAS_COSTS_USD: Record<string, number> = {
   ethereum: 20,
@@ -32,8 +32,8 @@ function getTradingFee(venue: string, source: string): number {
 }
 
 function estimateGasCost(chain: string | null): number {
-  if (!chain) return 5;
-  return GAS_COSTS_USD[chain] ?? 5;
+  if (!chain) return 0;
+  return GAS_COSTS_USD[chain] ?? 2;
 }
 
 interface ArbitrageOpportunity {
