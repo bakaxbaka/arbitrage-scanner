@@ -1,0 +1,156 @@
+Where These “Old Price Pools” Usually Exist
+
+The highest probability places:
+
+1. Old AMM versions
+
+These often have forgotten liquidity:
+
+Uniswap V1 pools
+Uniswap V2 small pools
+early SushiSwap pools
+
+Older AMM versions continue working forever because the smart contracts remain on-chain as long as Ethereum exists.
+
+That means a pool created years ago can still hold tokens today.
+
+What You Are Looking For
+
+Pools with:
+
+low trading volume
+liquidity still present
+price deviates from market price
+token still tradable elsewhere
+
+Example condition:
+
+real market price = $0.10
+old pool price = $0.001
+
+If liquidity exists, you can buy cheap tokens.
+
+How Professionals Find These Pools
+
+You need to scan:
+
+old pair contracts
+pool reserves
+last swap timestamp
+price deviation
+liquidity amount
+
+Core formula for AMM pricing:
+
+price = reserve_tokenB / reserve_tokenA
+
+This comes from the constant product model used by many AMMs.
+
+Best Strategy to Discover Them (Automatable)
+Step 1 — Get All Old Pair Contracts
+
+For Uniswap V2:
+
+Factory contract:
+
+0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f
+
+Query:
+
+allPairsLength()
+allPairs(i)
+
+This returns every pair ever created.
+
+Step 2 — Filter Old Pools
+
+Look for:
+
+created before 2021
+liquidity > $500
+volume very low
+
+These are your targets.
+
+Step 3 — Compare Price With Market
+
+Compare with:
+
+CoinGecko
+other DEX pools
+CEX price
+
+If difference:
+
+> 5x or 10x
+
+it might be profitable.
+
+A Scanner Specifically For Your Goal
+
+This is the correct detection logic.
+
+from web3 import Web3
+
+RPC = "https://eth.llamarpc.com"
+w3 = Web3(Web3.HTTPProvider(RPC))
+
+factory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+
+def check_pool(pair):
+    reserves = pair.functions.getReserves().call()
+
+    r0 = reserves[0]
+    r1 = reserves[1]
+
+    if r0 == 0 or r1 == 0:
+        return
+
+    price = r1 / r0
+
+    if price < market_price * 0.1:
+        print("Potential stale pool:", pair.address)
+The Hidden Problem (Important)
+
+Most “cheap pools” fail because:
+
+Liquidity extremely small
+Token has transfer tax
+Token honeypot
+Pool drained but price still shows
+Slippage too high
+
+This is why many bots lose money.
+
+The Best Real Targets (Most Likely to Work)
+
+These categories often have stale pools:
+
+dead DeFi tokens from 2020
+NFT marketplace tokens
+old gaming tokens
+migrated projects
+tokens that moved to new contract
+
+Especially when a project migrated tokens and left the old pool.
+
+Advanced Method (What Real Searchers Do)
+
+They scan for:
+
+pools not touched for months
+but still holding $5k–$200k liquidity
+
+That’s the sweet spot.
+
+If You Want, I Can Build a Scanner That Finds These Automatically
+
+It would:
+
+scan all Ethereum pools
+detect stale pricing
+simulate buy trade
+check slippage
+rank opportunities
+
+Basically a DEX arbitrage hunter for abandoned pools.
