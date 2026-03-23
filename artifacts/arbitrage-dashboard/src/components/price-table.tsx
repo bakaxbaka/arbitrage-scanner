@@ -80,6 +80,7 @@ export function PriceTable() {
   const [search, setSearch] = useState("");
   const [chain, setChain] = useState<string>("all");
   const [page, setPage] = useState(0);
+  const [venueFilter, setVenueFilter] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -91,16 +92,25 @@ export function PriceTable() {
     { query: { refetchInterval: 5000 } }
   );
 
+  const handleVenueClick = useCallback((venue: string) => {
+    setVenueFilter(prev => prev === venue ? null : venue);
+    setPage(0);
+  }, []);
+
   const filtered = useMemo(() => {
     if (!prices) return [];
+    let result = prices;
+    if (venueFilter) {
+      result = result.filter(p => p.venue === venueFilter);
+    }
     const q = search.toLowerCase().trim();
-    if (!q || isAddress) return prices;
-    return prices.filter(p =>
+    if (!q || isAddress) return result;
+    return result.filter(p =>
       p.pair.toLowerCase().includes(q) ||
       p.venue.toLowerCase().includes(q) ||
       (p.baseToken ?? "").toLowerCase().includes(q)
     );
-  }, [prices, search, isAddress]);
+  }, [prices, search, isAddress, venueFilter]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -209,7 +219,7 @@ export function PriceTable() {
         </div>
 
         {!isAddress && (
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1 flex-wrap items-center">
             {CHAINS.map((c) => (
               <button
                 key={c}
@@ -224,6 +234,22 @@ export function PriceTable() {
                 {c}
               </button>
             ))}
+            {venueFilter && (
+              <>
+                <span className="text-muted-foreground/40 text-[10px] mx-0.5">·</span>
+                <button
+                  onClick={() => { setVenueFilter(null); setPage(0); }}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono uppercase rounded border transition-colors",
+                    CHAIN_COLORS[venueFilter] ?? "border-primary text-primary",
+                    "bg-current/5"
+                  )}
+                >
+                  {venueFilter}
+                  <X className="h-2.5 w-2.5 opacity-70" />
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -386,17 +412,23 @@ export function PriceTable() {
                   paginated.map((price) => (
                     <TableRow key={price.id} className="border-border/20 hover:bg-muted/30 transition-colors">
                       <TableCell className="py-2">
-                        <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleVenueClick(price.venue)}
+                          title={venueFilter === price.venue ? `Clear ${price.venue} filter` : `Filter by ${price.venue}`}
+                          className="group"
+                        >
                           <Badge
                             variant="outline"
                             className={cn(
-                              "text-[9px] uppercase px-1.5 py-0 h-4 shrink-0 font-mono",
-                              CHAIN_COLORS[price.venue] ?? (price.source === "dex" ? "border-emerald-500/40 text-emerald-500" : "border-blue-500/40 text-blue-400")
+                              "text-[9px] uppercase px-1.5 py-0 h-4 shrink-0 font-mono cursor-pointer transition-all",
+                              "group-hover:scale-105 group-hover:brightness-125",
+                              CHAIN_COLORS[price.venue] ?? (price.source === "dex" ? "border-emerald-500/40 text-emerald-500" : "border-blue-500/40 text-blue-400"),
+                              venueFilter === price.venue && "ring-1 ring-current brightness-150 bg-current/10"
                             )}
                           >
                             {price.venue}
                           </Badge>
-                        </div>
+                        </button>
                       </TableCell>
                       <TableCell className="font-mono font-bold text-xs py-2">{price.pair}</TableCell>
                       <TableCell className="text-right font-mono text-xs text-foreground py-2">
