@@ -80,6 +80,99 @@ interface ArbitrageOpportunity {
   netProfitUsd: number;
   buyLiquidity: number | null;
   sellLiquidity: number | null;
+  type?: "cross" | "triangular";
+}
+
+/**
+ * Triangular arbitrage: TOKEN/USDT vs TOKEN/BTC × BTC/USDT
+ *
+ * Within the same exchange, if the implied TOKEN/USDT from BTC quote differs
+ * enough from the direct TOKEN/USDT price, a triangular loop is profitable.
+ *
+ * Requires TOKEN/USDT AND TOKEN/BTC AND BTC/USDT on the same venue.
+ * Currently CEX scanners only ingest USDT pairs, so this runs over DEX data
+ * from chainScanner where both base/BTC and base/USDT pools may exist.
+ */
+function detectTriangular(): ArbitrageOpportunity[] {
+  const allPrices = priceStore.getAll();
+  const cutoff    = new Date(Date.now() - 60_000);
+  const fresh     = allPrices.filter((p) => p.updatedAt >= cutoff);
+
+  // Build venue → pair → price maps
+  const byVenuePair = new Map<string, Map<string, PriceData>>();
+  for (const p of fresh) {
+    if (!byVenuePair.has(p.venue)) byVenuePair.set(p.venue, new Map());
+    byVenuePair.get(p.venue)!.set(p.pair, p);
+  }
+
+  const opportunities: ArbitrageOpportunity[] = [];
+
+  for (const [venue, pairMap] of byVenuePair) {
+    const btcUsdt = pairMap.get("BTC/USDT");
+    if (!btcUsdt) continue;
+
+    const btcPrice = btcUsdt.bid ?? btcUsdt.price;
+    if (!btcPrice || btcPrice <= 0) continue;
+
+    for (const [pair, tokenUsdt] of pairMap) {
+      if (!pair.endsWith("/USDT") || pair === "BTC/USDT") continue;
+      const base = pair.split("/")[0]!;
+
+      const tokenBtc = pairMap.get(`${base}/BTC`);
+      if (!tokenBtc) continue;
+
+      // Implied USDT price via BTC route:
+      //   buy TOKEN/USDT direct vs buy TOKEN/BTC then convert BTC/USDT
+      const directAsk    = tokenUsdt.ask ?? tokenUsdt.price;
+      const btcRouteAsk  = (tokenBtc.ask ?? tokenBtc.price) * (btcUsdt.ask ?? btcUsdt.price);
+
+      if (!directAsk || !btcRouteAsk || directAsk <= 0 || btcRouteAsk <= 0) continue;
+
+      let buyPrice: number, sellPrice: number, buyRoute: string, sellRoute: string;
+
+      if (directAsk < btcRouteAsk) {
+        buyPrice  = directAsk;
+        sellPrice = btcRouteAsk;
+        buyRoute  = `${venue} (direct)`;
+        sellRoute = `${venue} (via BTC)`;
+      } else {
+        buyPrice  = btcRouteAsk;
+        sellPrice = directAsk;
+        buyRoute  = `${venue} (via BTC)`;
+        sellRoute = `${venue} (direct)`;
+      }
+
+      const spreadPercent = ((sellPrice - buyPrice) / buyPrice) * 100;
+      if (spreadPercent < MIN_SPREAD_PERCENT || spreadPercent > MAX_SPREAD_PERCENT) continue;
+
+      const source    = tokenUsdt.source;
+      const feeRate   = getTradingFee(venue, source) * 3; // three legs
+      const profitUsd = ((spreadPercent / 100) - feeRate) * TRADE_AMOUNT_USD;
+      const gasCost   = source === "dex" ? (estimateGasCost(tokenUsdt.chain) * 3) : 0;
+      const netProfit = profitUsd - gasCost;
+
+      if (netProfit <= 0) continue;
+
+      opportunities.push({
+        type:        "triangular",
+        buyVenue:    buyRoute,
+        sellVenue:   sellRoute,
+        buySource:   source,
+        sellSource:  source,
+        pair:        `${base}/USDT`,
+        buyPrice,
+        sellPrice,
+        spreadPercent,
+        profitUsd,
+        gasCostEth:  gasCost,
+        netProfitUsd: netProfit,
+        buyLiquidity:  tokenUsdt.liquidityUsd ?? null,
+        sellLiquidity: tokenBtc.liquidityUsd  ?? null,
+      });
+    }
+  }
+
+  return opportunities;
 }
 
 export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
@@ -149,6 +242,7 @@ export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
         if (netProfitUsd <= 0) continue;
 
         opportunities.push({
+          type: "cross",
           buyVenue: buyAt.venue,
           sellVenue: sellAt.venue,
           buySource: buyAt.source,
@@ -166,6 +260,10 @@ export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
       }
     }
   }
+
+  // Merge in triangular opportunities
+  const triangular = detectTriangular();
+  opportunities.push(...triangular);
 
   return opportunities.sort((a, b) => b.spreadPercent - a.spreadPercent);
 }

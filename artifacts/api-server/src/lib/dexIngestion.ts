@@ -203,6 +203,7 @@ async function pollPool(pool: PoolConfig) {
 
   if (!result || result.price <= 0) return;
 
+  const poolFee = 0.003;
   priceStore.set({
     source: "dex",
     venue: pool.venue,
@@ -211,6 +212,8 @@ async function pollPool(pool: PoolConfig) {
     baseToken: pool.base,
     quoteToken: pool.quote,
     price: result.price,
+    bid: result.price * (1 - poolFee),
+    ask: result.price * (1 + poolFee),
     liquidityUsd: result.liquidityUsd,
     updatedAt: new Date(),
   });

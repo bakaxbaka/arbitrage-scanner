@@ -2,27 +2,39 @@ import { useGetOpportunities } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Copy, AlertCircle, ArrowRight, TrendingUp } from "lucide-react";
+import { Copy, AlertCircle, ArrowRight, TrendingUp, Triangle } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
-const CHAIN_COLORS: Record<string, string> = {
-  gate: "border-teal-500/50 text-teal-400",
-  binance: "border-yellow-400/50 text-yellow-400",
-  bybit: "border-orange-400/50 text-orange-400",
-  okx: "border-slate-400/50 text-slate-300",
-  kucoin: "border-green-500/50 text-green-400",
-  mexc: "border-fuchsia-500/50 text-fuchsia-400",
-  kraken: "border-violet-400/50 text-violet-400",
+const CEX_COLORS: Record<string, string> = {
+  gate:     "border-teal-500/50 text-teal-400",
+  binance:  "border-yellow-400/50 text-yellow-400",
+  bybit:    "border-orange-400/50 text-orange-400",
+  okx:      "border-slate-400/50 text-slate-300",
+  kucoin:   "border-green-500/50 text-green-400",
+  mexc:     "border-fuchsia-500/50 text-fuchsia-400",
+  kraken:   "border-violet-400/50 text-violet-400",
   coinbase: "border-blue-600/50 text-blue-500",
 };
 
+const DEX_COLOR = "border-amber-400/50 text-amber-400";
+
+function getVenueColor(venue: string, source?: string): string {
+  if (source === "dex") return DEX_COLOR;
+  const key = venue.split(/[\s/\-_]/)[0]?.toLowerCase() ?? "";
+  return CEX_COLORS[key] ?? "border-border text-muted-foreground";
+}
+
 function formatPrice(p: number): string {
   if (p >= 1000) return p.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  if (p >= 1) return p.toFixed(4);
+  if (p >= 1)    return p.toFixed(4);
   if (p >= 0.0001) return p.toFixed(6);
   return p.toExponential(4);
+}
+
+function venueLabel(venue: string): string {
+  return venue.length > 20 ? venue.slice(0, 18) + "…" : venue;
 }
 
 export function OpportunityFeed() {
@@ -32,7 +44,7 @@ export function OpportunityFeed() {
   );
   const { toast } = useToast();
 
-  const copyToClipboard = (data: any) => {
+  const copyToClipboard = (data: unknown) => {
     navigator.clipboard.writeText(JSON.stringify(data, null, 2));
     toast({
       title: "Data Copied",
@@ -71,9 +83,11 @@ export function OpportunityFeed() {
         ) : (
           <div className="divide-y divide-border/30">
             {opportunities.map((opp) => {
-              const buyColor = CHAIN_COLORS[opp.buyVenue] ?? "border-border text-muted-foreground";
-              const sellColor = CHAIN_COLORS[opp.sellVenue] ?? "border-border text-muted-foreground";
+              const buyColor  = getVenueColor(opp.buyVenue,  opp.buySource);
+              const sellColor = getVenueColor(opp.sellVenue, opp.sellSource);
               const isHot = opp.spreadPercent > 1.0;
+              const isDex = opp.buySource === "dex" || opp.sellSource === "dex";
+              const isTriangular = (opp as any).type === "triangular";
 
               return (
                 <div
@@ -87,6 +101,20 @@ export function OpportunityFeed() {
                     <div className="flex flex-col gap-1.5 min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-sm text-foreground">{opp.pair}</span>
+
+                        {isTriangular && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-purple-500/50 text-purple-400 font-mono">
+                            <Triangle className="h-2.5 w-2.5 mr-0.5" />
+                            TRIANGULAR
+                          </Badge>
+                        )}
+
+                        {isDex && !isTriangular && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-400/50 text-amber-400 font-mono">
+                            DEX↔CEX
+                          </Badge>
+                        )}
+
                         <span className="text-[10px] font-mono text-muted-foreground/50">
                           {format(new Date(opp.detectedAt), "HH:mm:ss")}
                         </span>
@@ -94,14 +122,14 @@ export function OpportunityFeed() {
 
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <div className={cn("inline-flex flex-col items-start px-2 py-1 rounded border text-[10px] font-mono", buyColor, "bg-current/5")}>
-                          <span className="opacity-60 uppercase text-[9px]">BUY @ {opp.buyVenue}</span>
+                          <span className="opacity-60 uppercase text-[9px]">BUY @ {venueLabel(opp.buyVenue)}</span>
                           <span className="font-bold text-xs">${formatPrice(opp.buyPrice)}</span>
                         </div>
 
                         <ArrowRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
 
                         <div className={cn("inline-flex flex-col items-start px-2 py-1 rounded border text-[10px] font-mono", sellColor, "bg-current/5")}>
-                          <span className="opacity-60 uppercase text-[9px]">SELL @ {opp.sellVenue}</span>
+                          <span className="opacity-60 uppercase text-[9px]">SELL @ {venueLabel(opp.sellVenue)}</span>
                           <span className="font-bold text-xs">${formatPrice(opp.sellPrice)}</span>
                         </div>
                       </div>

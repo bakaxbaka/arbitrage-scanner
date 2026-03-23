@@ -297,3 +297,26 @@ function buildAddrMap(info: CurrencyInfo | undefined): Map<string, string> {
   }
   return m;
 }
+
+/**
+ * Returns a map of symbol → contract address for all KuCoin-listed tokens
+ * that have a contract on the given normalized chain name (e.g. "ethereum",
+ * "bsc", "arbitrum", "polygon", "base", "optimism", "avalanche").
+ *
+ * Used by the DEX pool scanner to batch-query DexScreener without depending
+ * on CoinGecko's rate-limited API.
+ */
+export function getContractsByChain(chain: string): Map<string, string> {
+  const result = new Map<string, string>();
+  const kuMap = cexCache.get("kucoin");
+  if (!kuMap) return result;
+  for (const [symbol, info] of kuMap) {
+    for (const c of info.chains) {
+      if (c.chain === chain && c.contractAddress) {
+        result.set(symbol.toUpperCase(), c.contractAddress.toLowerCase());
+        break;
+      }
+    }
+  }
+  return result;
+}

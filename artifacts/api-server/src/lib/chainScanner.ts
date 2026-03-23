@@ -78,6 +78,23 @@ let topTokensCache: TokenInfo[] = [];
 let lastTokenRefresh = 0;
 const TOKEN_REFRESH_INTERVAL = 30 * 60 * 1000;
 
+function formatDexVenue(dexId: string, chain: string): string {
+  const chainLabel = chain.charAt(0).toUpperCase() + chain.slice(1);
+  const id = dexId.toLowerCase();
+  const dex =
+    id.includes("uniswap") ? "Uniswap" :
+    id.includes("pancake") ? "PancakeSwap" :
+    id.includes("sushi") ? "SushiSwap" :
+    id.includes("curve") ? "Curve" :
+    id.includes("camelot") ? "Camelot" :
+    id.includes("aerodrome") ? "Aerodrome" :
+    id.includes("velodrome") ? "Velodrome" :
+    id.includes("trader") ? "TraderJoe" :
+    id.includes("orca") ? "Orca" :
+    dexId.charAt(0).toUpperCase() + dexId.slice(1);
+  return `${dex} / ${chainLabel}`;
+}
+
 let platformCache: CoinPlatform[] = [];
 let lastPlatformRefresh = 0;
 const PLATFORM_REFRESH_INTERVAL = 24 * 60 * 60 * 1000;
@@ -251,8 +268,9 @@ async function scanChain(coingeckoChainId: string, tokens: TokenInfo[]): Promise
       const priceUsd = parseFloat(best.priceUsd);
       if (isNaN(priceUsd) || priceUsd <= 0) continue;
 
-      const pair = `${token.symbol}/USD`;
-      const venue = `${best.dexId}_${dexChainId}`;
+      const pair = `${token.symbol}/USDT`;
+      const venue = formatDexVenue(best.dexId, dexChainId);
+      const poolFee = 0.003;
 
       priceStore.set({
         source: "dex",
@@ -260,8 +278,10 @@ async function scanChain(coingeckoChainId: string, tokens: TokenInfo[]): Promise
         chain: dexChainId,
         pair,
         baseToken: token.symbol,
-        quoteToken: "USD",
+        quoteToken: "USDT",
         price: priceUsd,
+        bid: priceUsd * (1 - poolFee),
+        ask: priceUsd * (1 + poolFee),
         volume24h: best.volume?.h24,
         liquidityUsd: best.liquidity?.usd,
         updatedAt: new Date(),
