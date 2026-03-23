@@ -4,12 +4,16 @@ import { priceStore, PriceData } from "./priceStore";
 import { broadcast } from "./wsServer";
 import { logger } from "./logger";
 import { exchangeFees } from "./cexIngestion";
+import {
+  isWithdrawBlocked,
+  isDepositBlocked,
+  hasContractMismatch,
+} from "./currencyInfoCache";
 
 const MIN_SPREAD_PERCENT = 0.05;
-// Anything above this is almost certainly a ticker collision (same symbol, different token)
-// rather than real arbitrage. Real cross-exchange gaps rarely exceed 15%.
 const MAX_SPREAD_PERCENT = 20;
 const TRADE_AMOUNT_USD = 100;
+const MIN_LIQUIDITY_USD = 10_000;
 
 // Known ticker collisions: same symbol listed on multiple exchanges but different underlying
 // tokens. Pairs of (baseSymbol, venue1, venue2) where the comparison is invalid.
@@ -36,6 +40,16 @@ const DEX_FEE_RATE: Record<string, number> = {
   "PancakeSwap V3 / BSC": 0.0005,
   "Curve 3Pool / Ethereum": 0.0004,
 };
+
+/**
+ * Best available liquidity indicator for a price entry.
+ * DEX pairs carry pool liquidityUsd; CEX pairs carry 24h quote volume.
+ * Returns undefined when neither is available.
+ */
+function effectiveLiquidity(p: PriceData): number | undefined {
+  if (p.source === "dex") return p.liquidityUsd;
+  return p.volume24h;
+}
 
 function getTradingFee(venue: string, source: string): number {
   if (source === "dex") {
@@ -102,6 +116,25 @@ export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
         const baseSymbol = pair.split("/")[0];
         const collisionKey = `${baseSymbol}:${buyAt.venue}:${sellAt.venue}`;
         if (TICKER_COLLISION_PAIRS.has(collisionKey)) continue;
+
+        // ── Filter 2: Liquidity < $10k ────────────────────────────────────────
+        // Use DEX pool liquidity for on-chain venues; 24h volume as proxy for CEX.
+        // Only reject when the figure is known and below threshold.
+        const buyLiq = effectiveLiquidity(buyAt);
+        const sellLiq = effectiveLiquidity(sellAt);
+        if (buyLiq !== undefined && buyLiq < MIN_LIQUIDITY_USD) continue;
+        if (sellLiq !== undefined && sellLiq < MIN_LIQUIDITY_USD) continue;
+
+        // ── Filter 3: Contract address mismatch ───────────────────────────────
+        // If both venues expose the same token's contract address on a shared
+        // chain and they differ, this is a different-token collision.
+        if (hasContractMismatch(baseSymbol, buyAt.venue, sellAt.venue)) continue;
+
+        // ── Filter 4: Withdraw / deposit disabled ─────────────────────────────
+        // You need to withdraw from the buy exchange and deposit on the sell
+        // exchange when rebalancing. If either side is closed, skip.
+        if (isWithdrawBlocked(buyAt.venue, baseSymbol)) continue;
+        if (isDepositBlocked(sellAt.venue, baseSymbol)) continue;
 
         const buyFeeRate = getTradingFee(buyAt.venue, buyAt.source);
         const sellFeeRate = getTradingFee(sellAt.venue, sellAt.source);
