@@ -1,18 +1,25 @@
 /**
  * Currency Info Cache
  *
- * Fetches and caches per-symbol metadata from Gate.io and KuCoin:
- *   - withdraw_enabled / deposit_enabled
- *   - contract address per chain (for cross-venue collision detection)
+ * Three data sources, each serving a different role:
  *
- * Refreshes every 30 minutes. Defaults to "allowed / no data" so that
- * unknown tokens never get silently blocked.
+ *   Gate.io  — per-symbol withdraw/deposit enabled flags (4,000+ currencies)
+ *   KuCoin   — per-chain contract address + withdraw/deposit per chain
+ *   CoinGecko — canonical symbol → contract registry for mismatch detection
+ *
+ * "Ambiguous" symbols: a CoinGecko symbol that maps to >1 distinct token.
+ *   e.g. "ELON" is both Dogelon Mars and multiple other ELON-named tokens.
+ *   For ambiguous symbols where NEITHER exchange provides contract data we
+ *   cannot verify it's the same token → treat as a mismatch.
  */
 
 import { logger } from "./logger";
 
-const FETCH_TIMEOUT_MS = 20_000;
-const REFRESH_INTERVAL_MS = 30 * 60 * 1_000;
+const FETCH_TIMEOUT_MS = 25_000;
+const CEX_REFRESH_MS   = 30 * 60 * 1_000;  // 30 min
+const CG_REFRESH_MS    = 24 * 60 * 60 * 1_000; // 24 h
+
+// ─── CEX currency store ───────────────────────────────────────────────────────
 
 interface ChainInfo {
   chain: string;
@@ -27,7 +34,8 @@ interface CurrencyInfo {
   chains: ChainInfo[];
 }
 
-const cache = new Map<string, Map<string, CurrencyInfo>>();
+// venue → SYMBOL → info
+const cexCache = new Map<string, Map<string, CurrencyInfo>>();
 
 function normalizeChain(chain: string): string {
   const n = chain.toLowerCase().replace(/\s+/g, "");
@@ -64,8 +72,7 @@ async function fetchGateCurrencies(): Promise<void> {
       chains: [],
     });
   }
-
-  cache.set("gate", map);
+  cexCache.set("gate", map);
   logger.info({ count: map.size }, "Currency cache: Gate.io loaded");
 }
 
@@ -102,72 +109,191 @@ async function fetchKucoinCurrencies(): Promise<void> {
       chains,
     });
   }
-
-  cache.set("kucoin", map);
+  cexCache.set("kucoin", map);
   logger.info({ count: map.size }, "Currency cache: KuCoin loaded");
 }
 
-async function refresh(): Promise<void> {
+// ─── CoinGecko symbol registry ────────────────────────────────────────────────
+
+// SYMBOL → all contract addresses across every CG coin that shares this symbol
+const cgAddressSet = new Map<string, Set<string>>();
+// SYMBOL → count of distinct CoinGecko coins — >1 means "ambiguous"
+const cgCoinCount  = new Map<string, number>();
+// contract address (lowercase) → CoinGecko coin ID
+const cgAddrToId   = new Map<string, string>();
+
+let cgLoaded = false;
+
+async function fetchCoinGeckoRegistry(): Promise<void> {
+  const resp = await fetch(
+    "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+    { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+  );
+  if (!resp.ok) throw new Error(`CoinGecko coins/list HTTP ${resp.status}`);
+
+  const coins = (await resp.json()) as Array<{
+    id: string;
+    symbol: string;
+    platforms?: Record<string, string>;
+  }>;
+
+  cgAddressSet.clear();
+  cgCoinCount.clear();
+  cgAddrToId.clear();
+
+  for (const coin of coins) {
+    const sym = coin.symbol.toUpperCase();
+
+    // coin count per symbol
+    cgCoinCount.set(sym, (cgCoinCount.get(sym) ?? 0) + 1);
+
+    // address registry
+    for (const [, addr] of Object.entries(coin.platforms ?? {})) {
+      if (!addr) continue;
+      const a = addr.toLowerCase();
+      cgAddrToId.set(a, coin.id);
+      if (!cgAddressSet.has(sym)) cgAddressSet.set(sym, new Set());
+      cgAddressSet.get(sym)!.add(a);
+    }
+  }
+
+  const ambiguous = [...cgCoinCount.values()].filter((c) => c > 1).length;
+  cgLoaded = true;
+  logger.info(
+    { total: cgCoinCount.size, ambiguous, addresses: cgAddrToId.size },
+    "Currency cache: CoinGecko registry loaded"
+  );
+}
+
+// ─── Refresh scheduling ───────────────────────────────────────────────────────
+
+async function refreshCex(): Promise<void> {
   await Promise.allSettled([fetchGateCurrencies(), fetchKucoinCurrencies()]);
 }
 
+async function refreshCg(): Promise<void> {
+  try {
+    await fetchCoinGeckoRegistry();
+  } catch (err) {
+    logger.warn({ err }, "CoinGecko registry fetch failed (non-fatal)");
+  }
+}
+
 export async function startCurrencyInfoCache(): Promise<void> {
-  await refresh();
+  // CEX data is needed before the arbitrage engine starts — await it.
+  await refreshCex();
+
+  // CoinGecko is best-effort and large — load in background after startup.
+  refreshCg().catch((err) =>
+    logger.warn({ err }, "CoinGecko initial load failed")
+  );
+
   setInterval(() => {
-    refresh().catch((err) =>
-      logger.error({ err }, "Currency info cache refresh failed")
+    refreshCex().catch((err) =>
+      logger.error({ err }, "CEX currency refresh failed")
     );
-  }, REFRESH_INTERVAL_MS);
+  }, CEX_REFRESH_MS);
+
+  setInterval(() => {
+    refreshCg().catch((err) =>
+      logger.warn({ err }, "CoinGecko registry refresh failed")
+    );
+  }, CG_REFRESH_MS);
 }
 
-function getInfo(venue: string, symbol: string): CurrencyInfo | undefined {
-  return cache.get(venue)?.get(symbol.toUpperCase());
+// ─── Exported helpers ─────────────────────────────────────────────────────────
+
+function getCexInfo(venue: string, symbol: string): CurrencyInfo | undefined {
+  return cexCache.get(venue)?.get(symbol.toUpperCase());
 }
 
-/** True if we know withdrawal is disabled on this venue for this symbol. */
+/** True if withdrawal is confirmed disabled on this venue for this symbol. */
 export function isWithdrawBlocked(venue: string, symbol: string): boolean {
-  const info = getInfo(venue, symbol);
+  const info = getCexInfo(venue, symbol);
   if (!info) return false;
   return !info.withdrawEnabled;
 }
 
-/** True if we know deposit is disabled on this venue for this symbol. */
+/** True if deposit is confirmed disabled on this venue for this symbol. */
 export function isDepositBlocked(venue: string, symbol: string): boolean {
-  const info = getInfo(venue, symbol);
+  const info = getCexInfo(venue, symbol);
   if (!info) return false;
   return !info.depositEnabled;
 }
 
 /**
- * Returns true when both venues have a known contract address on the same chain
- * and those addresses differ — a strong signal that the tickers represent
- * different underlying tokens.
+ * True when this symbol is known on CoinGecko to belong to multiple
+ * distinct tokens — meaning a same-ticker listing on two exchanges could
+ * easily be two completely different coins.
+ */
+export function isSymbolAmbiguous(symbol: string): boolean {
+  if (!cgLoaded) return false;
+  return (cgCoinCount.get(symbol.toUpperCase()) ?? 0) > 1;
+}
+
+/**
+ * Returns true when we can confirm the pair is a ticker collision.
+ *
+ * Three ways to confirm:
+ *  A) Both venues expose a contract on the same chain and they differ.
+ *  B) One venue's contract address is not present in CoinGecko's registry
+ *     for this symbol at all — meaning the exchange lists a completely
+ *     different token version that CoinGecko doesn't associate with this symbol.
+ *  C) The symbol is CoinGecko-ambiguous AND neither venue provides any
+ *     contract address data — we can't verify they're the same token.
  */
 export function hasContractMismatch(
   symbol: string,
   venue1: string,
   venue2: string
 ): boolean {
-  const info1 = getInfo(venue1, symbol);
-  const info2 = getInfo(venue2, symbol);
-  if (!info1?.chains.length || !info2?.chains.length) return false;
+  const sym = symbol.toUpperCase();
+  const info1 = getCexInfo(venue1, sym);
+  const info2 = getCexInfo(venue2, sym);
 
-  const addrMap1 = new Map<string, string>();
-  for (const c of info1.chains) {
-    if (c.contractAddress) addrMap1.set(c.chain, c.contractAddress);
+  const addrs1 = buildAddrMap(info1);
+  const addrs2 = buildAddrMap(info2);
+
+  // ── Rule A: shared chain, different contract ──────────────────────────────
+  for (const [chain, a1] of addrs1) {
+    const a2 = addrs2.get(chain);
+    if (a2 && a1 !== a2) {
+      logger.debug({ symbol, venue1, venue2, chain, a1, a2 }, "Contract mismatch (Rule A)");
+      return true;
+    }
   }
 
-  for (const c of info2.chains) {
-    if (!c.contractAddress) continue;
-    const a1 = addrMap1.get(c.chain);
-    if (a1 && a1 !== c.contractAddress) {
-      logger.debug(
-        { symbol, venue1, venue2, chain: c.chain, a1, a2: c.contractAddress },
-        "Contract address mismatch detected"
-      );
+  // ── Rule B: one side's contract not in CoinGecko's symbol registry ────────
+  if (cgLoaded) {
+    const cgSet = cgAddressSet.get(sym);
+    if (cgSet && cgSet.size > 0) {
+      for (const [, addr] of [...addrs1, ...addrs2]) {
+        if (!cgSet.has(addr)) {
+          logger.debug({ symbol, venue1, venue2, addr }, "Contract not in CoinGecko registry (Rule B)");
+          return true;
+        }
+      }
+    }
+
+    // ── Rule C: ambiguous symbol, no contract data on either side ─────────────
+    if (
+      (cgCoinCount.get(sym) ?? 0) > 1 &&
+      addrs1.size === 0 &&
+      addrs2.size === 0
+    ) {
+      logger.debug({ symbol, venue1, venue2 }, "Ambiguous symbol, no contract data (Rule C)");
       return true;
     }
   }
 
   return false;
+}
+
+function buildAddrMap(info: CurrencyInfo | undefined): Map<string, string> {
+  const m = new Map<string, string>();
+  if (!info) return m;
+  for (const c of info.chains) {
+    if (c.contractAddress) m.set(c.chain, c.contractAddress);
+  }
+  return m;
 }

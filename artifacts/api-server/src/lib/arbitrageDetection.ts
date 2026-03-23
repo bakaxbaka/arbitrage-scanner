@@ -10,8 +10,11 @@ import {
   hasContractMismatch,
 } from "./currencyInfoCache";
 
-const MIN_SPREAD_PERCENT = 0.05;
-const MAX_SPREAD_PERCENT = 20;
+// 0.3% min: below this the fee drag (0.2–0.4% total) makes it unprofitable
+const MIN_SPREAD_PERCENT = 0.3;
+// 5% max: real liquid CEX arb virtually never exceeds this; larger gaps
+// are almost always ticker collisions or stale/erroneous data
+const MAX_SPREAD_PERCENT = 5;
 const TRADE_AMOUNT_USD = 100;
 const MIN_LIQUIDITY_USD = 10_000;
 
