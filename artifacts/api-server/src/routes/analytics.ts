@@ -80,8 +80,8 @@ function computeLiveStats() {
     for (let i = 0; i < prices.length; i++) {
       for (let j = 0; j < prices.length; j++) {
         if (i === j) continue;
-        const buyPrice = prices[i].ask ?? prices[i].price;
-        const sellPrice = prices[j].bid ?? prices[j].price;
+        const buyPrice = prices[i]!.ask ?? prices[i]!.price;
+        const sellPrice = prices[j]!.bid ?? prices[j]!.price;
         if (sellPrice <= buyPrice) continue;
         const sp = ((sellPrice - buyPrice) / buyPrice) * 100;
         if (sp >= 0.05) spreads.push(sp);

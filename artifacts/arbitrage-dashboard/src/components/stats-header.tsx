@@ -47,14 +47,14 @@ export function StatsHeader() {
     },
     {
       title: "Max Spread",
-      value: `${stats.maxSpreadPercent.toFixed(2)}%`,
+      value: `${(stats.maxSpreadPercent ?? 0).toFixed(2)}%`,
       icon: TrendingUp,
-      color: stats.maxSpreadPercent > 2 ? "text-primary" : "text-yellow-400",
-      bg: stats.maxSpreadPercent > 2 ? "bg-primary/10" : "bg-yellow-400/10"
+      color: (stats.maxSpreadPercent ?? 0) > 2 ? "text-primary" : "text-yellow-400",
+      bg: (stats.maxSpreadPercent ?? 0) > 2 ? "bg-primary/10" : "bg-yellow-400/10"
     },
     {
       title: "Avg Spread",
-      value: `${stats.avgSpreadPercent.toFixed(2)}%`,
+      value: `${(stats.avgSpreadPercent ?? 0).toFixed(2)}%`,
       icon: AlertTriangle,
       color: "text-blue-400",
       bg: "bg-blue-400/10"
