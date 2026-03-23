@@ -3,6 +3,7 @@ import { opportunitiesTable, pricesTable } from "@workspace/db/schema";
 import { priceStore, PriceData } from "./priceStore";
 import { broadcast } from "./wsServer";
 import { logger } from "./logger";
+import { exchangeFees } from "./cexIngestion";
 
 const MIN_SPREAD_PERCENT = 0.05;
 const TRADE_AMOUNT_USD = 10_000;
@@ -14,6 +15,21 @@ const GAS_COSTS_USD: Record<string, number> = {
   bsc: 0.3,
   polygon: 0.1,
 };
+
+const DEX_FEE_RATE: Record<string, number> = {
+  "Uniswap V3 / Ethereum": 0.0005,
+  "Uniswap V3 / Arbitrum": 0.0005,
+  "Uniswap V3 / Base": 0.0005,
+  "PancakeSwap V3 / BSC": 0.0005,
+  "Curve 3Pool / Ethereum": 0.0004,
+};
+
+function getTradingFee(venue: string, source: string): number {
+  if (source === "dex") {
+    return DEX_FEE_RATE[venue] ?? 0.001;
+  }
+  return exchangeFees[venue] ?? 0.001;
+}
 
 function estimateGasCost(chain: string | null): number {
   if (!chain) return 5;
@@ -66,7 +82,10 @@ export function detectArbitrageOpportunities(): ArbitrageOpportunity[] {
         const spreadPercent = ((sellPrice - buyPrice) / buyPrice) * 100;
         if (spreadPercent < MIN_SPREAD_PERCENT) continue;
 
-        const profitUsd = (spreadPercent / 100) * TRADE_AMOUNT_USD;
+        const buyFeeRate = getTradingFee(buyAt.venue, buyAt.source);
+        const sellFeeRate = getTradingFee(sellAt.venue, sellAt.source);
+        const totalFeeRate = buyFeeRate + sellFeeRate;
+        const profitUsd = ((spreadPercent / 100) - totalFeeRate) * TRADE_AMOUNT_USD;
         const gasCostEth = estimateGasCost(buyAt.chain) + estimateGasCost(sellAt.chain ?? null);
         const netProfitUsd = profitUsd - gasCostEth;
 

@@ -1,143 +1,152 @@
+import ccxws from "ccxws";
+import ccxt from "ccxt";
 import WebSocket from "ws";
 import { priceStore } from "./priceStore";
 import { broadcast } from "./wsServer";
 import { logger } from "./logger";
 
-const MONITORED_PAIRS_BINANCE = [
-  "btcusdt", "ethusdt", "solusdt", "linkusdt", "uniusdt",
-  "aaveusdt", "bnbusdt", "arbusdt",
+const MONITORED_PAIRS = [
+  { base: "BTC", quote: "USDT", pair: "BTC/USDT" },
+  { base: "ETH", quote: "USDT", pair: "ETH/USDT" },
+  { base: "SOL", quote: "USDT", pair: "SOL/USDT" },
+  { base: "LINK", quote: "USDT", pair: "LINK/USDT" },
+  { base: "UNI", quote: "USDT", pair: "UNI/USDT" },
+  { base: "AAVE", quote: "USDT", pair: "AAVE/USDT" },
+  { base: "BNB", quote: "USDT", pair: "BNB/USDT" },
+  { base: "ARB", quote: "USDT", pair: "ARB/USDT" },
 ];
 
-const MONITORED_PAIRS_COINBASE: Record<string, string> = {
-  "BTC-USD": "BTC/USDT",
-  "ETH-USD": "ETH/USDT",
-  "SOL-USD": "SOL/USDT",
-  "LINK-USD": "LINK/USDT",
-  "UNI-USD": "UNI/USDT",
+export const exchangeFees: Record<string, number> = {
+  binance: 0.001,
+  coinbase: 0.006,
+  bybit: 0.001,
+  okx: 0.001,
+  kraken: 0.0026,
+  kucoin: 0.001,
 };
 
-const MONITORED_PAIRS_BYBIT = [
-  "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT",
-];
+async function loadExchangeFees() {
+  const exchangeIds = ["binance", "coinbasepro", "bybit", "okx", "kraken", "kucoin"] as const;
+  const nameMap: Record<string, string> = {
+    binance: "binance",
+    coinbasepro: "coinbase",
+    bybit: "bybit",
+    okx: "okx",
+    kraken: "kraken",
+    kucoin: "kucoin",
+  };
 
-const MONITORED_PAIRS_OKX = [
-  "BTC-USDT", "ETH-USDT", "SOL-USDT", "LINK-USDT",
-];
+  await Promise.allSettled(
+    exchangeIds.map(async (id) => {
+      try {
+        const ExClass = (ccxt as Record<string, unknown>)[id] as (new () => ccxt.Exchange) | undefined;
+        if (!ExClass) return;
+        const exchange = new ExClass();
+        exchange.options = { ...exchange.options, fetchResponse: false };
+
+        await exchange.loadMarkets();
+        const symbol = "BTC/USDT";
+        let fee = 0.001;
+        if (exchange.markets?.[symbol]?.taker != null) {
+          fee = exchange.markets[symbol].taker ?? 0.001;
+        } else {
+          const feeInfo = await exchange.fetchTradingFee(symbol).catch(() => null);
+          if (feeInfo?.taker != null) fee = feeInfo.taker;
+        }
+        const venueName = nameMap[id] ?? id;
+        exchangeFees[venueName] = fee;
+        logger.info({ exchange: venueName, fee }, "Loaded exchange fee");
+      } catch (err) {
+        logger.warn({ exchange: id, err }, "Failed to load exchange fee (using default)");
+      }
+    })
+  );
+}
 
 function normalizePair(rawSymbol: string): { pair: string; base: string; quote: string } | null {
-  const s = rawSymbol.toUpperCase().replace("-", "").replace("_", "");
+  const s = rawSymbol.toUpperCase().replace(/-/g, "").replace(/_/g, "");
   const stables = ["USDT", "USDC", "USD", "BUSD", "DAI"];
   for (const quote of stables) {
     if (s.endsWith(quote)) {
       const base = s.slice(0, s.length - quote.length);
+      if (!MONITORED_PAIRS.some((p) => p.base === base)) return null;
       return { pair: `${base}/USDT`, base, quote: "USDT" };
     }
   }
   return null;
 }
 
-function connectBinance() {
-  const streams = MONITORED_PAIRS_BINANCE.map((p) => `${p}@ticker`).join("/");
-  const url = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+function handleTicker(venue: string, ticker: ccxws.Ticker) {
+  try {
+    const normalized = normalizePair(ticker.base + ticker.quote);
+    if (!normalized) return;
 
-  const ws = new WebSocket(url);
+    const price = parseFloat(String(ticker.last ?? 0));
+    if (!price || isNaN(price)) return;
 
-  ws.on("open", () => logger.info("Binance WebSocket connected"));
+    priceStore.set({
+      source: "cex",
+      venue,
+      chain: null,
+      pair: normalized.pair,
+      baseToken: normalized.base,
+      quoteToken: normalized.quote,
+      price,
+      volume24h: ticker.quoteVolume != null ? parseFloat(String(ticker.quoteVolume)) : undefined,
+      bid: ticker.bid != null ? parseFloat(String(ticker.bid)) : undefined,
+      ask: ticker.ask != null ? parseFloat(String(ticker.ask)) : undefined,
+      updatedAt: new Date(),
+    });
 
-  ws.on("message", (raw) => {
-    try {
-      const msg = JSON.parse(raw.toString());
-      const data = msg.data || msg;
-      if (!data || !data.s) return;
-
-      const normalized = normalizePair(data.s);
-      if (!normalized) return;
-
-      priceStore.set({
-        source: "cex",
-        venue: "binance",
-        chain: null,
-        pair: normalized.pair,
-        baseToken: normalized.base,
-        quoteToken: normalized.quote,
-        price: parseFloat(data.c),
-        volume24h: parseFloat(data.v) * parseFloat(data.c),
-        bid: parseFloat(data.b),
-        ask: parseFloat(data.a),
-        updatedAt: new Date(),
-      });
-
-      broadcast("price_update", {
-        source: "cex",
-        venue: "binance",
-        pair: normalized.pair,
-        price: parseFloat(data.c),
-      });
-    } catch (err) {
-      logger.error({ err }, "Binance message parse error");
-    }
-  });
-
-  ws.on("error", (err) => logger.error({ err }, "Binance WebSocket error"));
-  ws.on("close", () => {
-    logger.warn("Binance WebSocket closed, reconnecting in 5s");
-    setTimeout(connectBinance, 5000);
-  });
+    broadcast("price_update", {
+      source: "cex",
+      venue,
+      pair: normalized.pair,
+      price: ticker.last ?? 0,
+    });
+  } catch (err) {
+    logger.error({ err, venue }, "Ticker handler error");
+  }
 }
 
-function connectCoinbase() {
-  const ws = new WebSocket("wss://ws-feed.exchange.coinbase.com");
+function connectCcxwsExchange(
+  ClientClass: new () => ccxws.BasicClient,
+  venue: string,
+  pairs: Array<{ base: string; quote: string; pair: string }>
+) {
+  let client: ccxws.BasicClient | null = null;
 
-  ws.on("open", () => {
-    logger.info("Coinbase WebSocket connected");
-    const subscribe = {
-      type: "subscribe",
-      product_ids: Object.keys(MONITORED_PAIRS_COINBASE),
-      channels: ["ticker"],
-    };
-    ws.send(JSON.stringify(subscribe));
-  });
-
-  ws.on("message", (raw) => {
+  function connect() {
     try {
-      const data = JSON.parse(raw.toString());
-      if (data.type !== "ticker") return;
+      client = new ClientClass();
 
-      const mappedPair = MONITORED_PAIRS_COINBASE[data.product_id];
-      if (!mappedPair) return;
+      client.on("ticker", (ticker: ccxws.Ticker) => handleTicker(venue, ticker));
 
-      const base = mappedPair.split("/")[0];
-      priceStore.set({
-        source: "cex",
-        venue: "coinbase",
-        chain: null,
-        pair: mappedPair,
-        baseToken: base,
-        quoteToken: "USDT",
-        price: parseFloat(data.price),
-        volume24h: parseFloat(data.volume_24h) * parseFloat(data.price),
-        bid: parseFloat(data.best_bid),
-        ask: parseFloat(data.best_ask),
-        updatedAt: new Date(),
+      client.on("error", (err: Error) => {
+        logger.error({ err, venue }, `${venue} WebSocket error`);
       });
 
-      broadcast("price_update", {
-        source: "cex",
-        venue: "coinbase",
-        pair: mappedPair,
-        price: parseFloat(data.price),
-      });
+      for (const p of pairs) {
+        try {
+          (client as ccxws.BasicClient).subscribeTicker({ id: `${p.base}-${p.quote}`, base: p.base, quote: p.quote, type: "spot" });
+        } catch (e) {
+          logger.warn({ venue, pair: p.pair, err: e }, "Failed to subscribe to ticker");
+        }
+      }
+
+      logger.info({ venue }, `${venue} ccxws connected`);
     } catch (err) {
-      logger.error({ err }, "Coinbase message parse error");
+      logger.error({ err, venue }, `Failed to connect ${venue} ccxws, retrying in 10s`);
+      setTimeout(connect, 10000);
     }
-  });
+  }
 
-  ws.on("error", (err) => logger.error({ err }, "Coinbase WebSocket error"));
-  ws.on("close", () => {
-    logger.warn("Coinbase WebSocket closed, reconnecting in 5s");
-    setTimeout(connectCoinbase, 5000);
-  });
+  connect();
 }
+
+const MONITORED_PAIRS_BYBIT = [
+  "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT", "UNIUSDT", "AAVEUSDT", "BNBUSDT", "ARBUSDT",
+];
 
 function connectBybit() {
   const ws = new WebSocket("wss://stream.bybit.com/v5/public/spot");
@@ -194,65 +203,20 @@ function connectBybit() {
   });
 }
 
-function connectOKX() {
-  const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
-
-  ws.on("open", () => {
-    logger.info("OKX WebSocket connected");
-    const subscribe = {
-      op: "subscribe",
-      args: MONITORED_PAIRS_OKX.map((p) => ({ channel: "tickers", instId: p })),
-    };
-    ws.send(JSON.stringify(subscribe));
-  });
-
-  ws.on("message", (raw) => {
-    try {
-      const msg = JSON.parse(raw.toString());
-      if (!msg.data || !Array.isArray(msg.data) || msg.data.length === 0) return;
-
-      const data = msg.data[0];
-      if (!data.instId) return;
-
-      const normalized = normalizePair(data.instId);
-      if (!normalized) return;
-
-      priceStore.set({
-        source: "cex",
-        venue: "okx",
-        chain: null,
-        pair: normalized.pair,
-        baseToken: normalized.base,
-        quoteToken: normalized.quote,
-        price: parseFloat(data.last),
-        volume24h: parseFloat(data.volCcy24h),
-        bid: parseFloat(data.bidPx),
-        ask: parseFloat(data.askPx),
-        updatedAt: new Date(),
-      });
-
-      broadcast("price_update", {
-        source: "cex",
-        venue: "okx",
-        pair: normalized.pair,
-        price: parseFloat(data.last),
-      });
-    } catch (err) {
-      logger.error({ err }, "OKX message parse error");
-    }
-  });
-
-  ws.on("error", (err) => logger.error({ err }, "OKX WebSocket error"));
-  ws.on("close", () => {
-    logger.warn("OKX WebSocket closed, reconnecting in 5s");
-    setTimeout(connectOKX, 5000);
-  });
-}
-
 export function startCexIngestion() {
-  logger.info("Starting CEX data ingestion...");
-  connectBinance();
-  connectCoinbase();
+  logger.info("Starting CEX data ingestion via ccxws...");
+
+  loadExchangeFees().catch((err) => logger.error({ err }, "Failed to load exchange fees"));
+
+  const pairsForExchange = MONITORED_PAIRS.filter((p) =>
+    ["BTC", "ETH", "SOL", "LINK", "UNI", "AAVE"].includes(p.base)
+  );
+
+  connectCcxwsExchange(ccxws.BinanceClient as unknown as new () => ccxws.BasicClient, "binance", pairsForExchange);
+  connectCcxwsExchange(ccxws.CoinbaseProClient as unknown as new () => ccxws.BasicClient, "coinbase", pairsForExchange.filter(p => p.quote === "USDT").map(p => ({ ...p, quote: "USD" })));
+  connectCcxwsExchange(ccxws.OkexClient as unknown as new () => ccxws.BasicClient, "okx", pairsForExchange);
+  connectCcxwsExchange(ccxws.KrakenClient as unknown as new () => ccxws.BasicClient, "kraken", pairsForExchange);
+  connectCcxwsExchange(ccxws.KucoinClient as unknown as new () => ccxws.BasicClient, "kucoin", pairsForExchange);
+
   connectBybit();
-  connectOKX();
 }

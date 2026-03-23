@@ -43,14 +43,23 @@ artifacts-monorepo/
 ## Features
 
 ### Data Ingestion
-- **CEX WebSocket connections**: Binance, Coinbase, Bybit, OKX
-- **DEX polling via CoinGecko API**: Uniswap V3 (Ethereum, Arbitrum, Base), Curve 3pool, PancakeSwap BSC
+- **CEX WebSocket connections via ccxws**: Binance, Coinbase, Bybit (direct WS), OKX, Kraken, KuCoin
+  - Uses unified ccxws event model with automatic reconnection
+  - Falls back to direct WebSocket for Bybit (no ccxws support)
+- **DEX prices from on-chain RPC via viem**: Reads `slot0()` and `liquidity()` directly from pool contracts
+  - Uniswap V3 pools on Ethereum, Arbitrum, Base
+  - PancakeSwap V3 on BSC
+  - Curve 3pool on Ethereum
+  - Pool addresses: WETH/USDC (Eth), ETH/USDC (Arb), ETH/USDT (Base), BTCB/USDT (BSC)
+  - Polls every 30 seconds
+- **Exchange fees loaded via ccxt REST**: OKX (0.15%), KuCoin (0.1%), Kraken (0.4%), others use defaults
 - Price store singleton (in-memory, ~1 min freshness window)
 
 ### Arbitrage Detection
 - Runs every 3 seconds on in-memory price store
 - Compares all venue pairs per trading pair
-- Filters by min spread (0.05%) and positive net profit after gas
+- **Deducts actual trading fees from ccxt** (per venue, per source type) before profit calculation
+- Filters by min spread (0.05%) and positive net profit after gas + fees
 - Persists top 20 opportunities to DB per cycle
 
 ### API Endpoints
